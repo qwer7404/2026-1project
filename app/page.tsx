@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion"
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
-import { Home, Utensils, ShieldAlert, User, LogIn, LogOut, Sparkles, ChevronDown, ChevronRight, Coffee, Moon, MapPin, Search, ArrowRight, BarChart3, Users, ChefHat, MessageSquare, BookOpen, Bookmark, Send, Heart } from "lucide-react"
+import { Home, Utensils, ShieldAlert, User, LogIn, LogOut, Sparkles, ChevronDown, ChevronRight, Coffee, Moon, MapPin, Search, ArrowRight, BarChart3, Users, ChefHat, MessageSquare, BookOpen, Bookmark, Send, Heart, Trash2 } from "lucide-react"
 
 // 🔥 카카오맵 라이브러리 불러오기
 import { Map, MapMarker, useKakaoLoader } from "react-kakao-maps-sdk"
@@ -87,6 +87,27 @@ export default function OhangSiktakMain() {
 
   const KOREA_CITIES = ["서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종", "경기", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주", "해외"];
 
+  // 🔥 1. 최초 로드 시 비회원의 localStorage 데이터 복구
+  useEffect(() => {
+    const localSaju = localStorage.getItem("tmp_saju");
+    const localAiResult = localStorage.getItem("tmp_aiResult");
+    const localRecipe = localStorage.getItem("tmp_recipe");
+    const localChat = localStorage.getItem("tmp_chat");
+    const localCompanion = localStorage.getItem("tmp_companion");
+    const localFamilyResult = localStorage.getItem("tmp_familyResult");
+
+    if (localSaju) setSajuInput(JSON.parse(localSaju));
+    if (localAiResult) {
+      setAiResult(JSON.parse(localAiResult));
+      setHasAnalyzed(true);
+    }
+    if (localRecipe) setRecipeData(JSON.parse(localRecipe));
+    if (localChat) setChatMessages(JSON.parse(localChat));
+    if (localCompanion) setCompanionSaju(JSON.parse(localCompanion));
+    if (localFamilyResult) setFamilyResult(JSON.parse(localFamilyResult));
+  }, []);
+
+  // 🔥 2. Auth 상태 관리 (탭 이동 시 초기화되던 버그 수정)
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser)
@@ -100,19 +121,20 @@ export default function OhangSiktakMain() {
           if (userData.scraps) setSavedScraps(userData.scraps)
           if (userData.companionSaju) setCompanionSaju(userData.companionSaju)
           if (userData.familyResult) setFamilyResult(userData.familyResult)
+          if (userData.recipeData) setRecipeData(userData.recipeData)
+          if (userData.chatMessages) setChatMessages(userData.chatMessages)
         }
-      } else {
-        setHasAnalyzed(false); setAiResult(null); setSavedScraps([]);
-        setCompanionSaju({ name: "", birthDate: "", isTimeUnknown: false, birthHour: "00", birthMinute: "00", gender: "male", locationType: "city", birthCity: "인천", jasiLaw: "tongjasi" });
-        setFamilyResult(null);
-        setSajuInput({ name: "", birthDate: "", isTimeUnknown: false, birthHour: "00", birthMinute: "00", gender: "male", locationType: "city", birthCity: "인천", jasiLaw: "tongjasi" })
-        if (activeTab === "admin") setActiveTab("home")
       }
     });
     return () => unsubscribe()
-  }, [activeTab])
+  }, []) // 의존성 배열에서 activeTab 제거
 
-  // 🔥 백그라운드 자동 로딩 useEffect는 완전히 삭제했습니다. (버튼 클릭 시에만 로드되도록)
+  // 🔥 3. 관리자 탭 접근 제어 분리
+  useEffect(() => {
+    if (!user && activeTab === "admin") {
+      setActiveTab("home")
+    }
+  }, [activeTab, user])
 
   useEffect(() => {
     if (activeTab !== "map") return;
@@ -147,18 +169,46 @@ export default function OhangSiktakMain() {
     }
   }, [aiResult, familyResult, mapCenter, activeTab]);
 
+  // 🔥 비회원 데이터를 회원 DB로 Sync
   const handleGoogleLogin = async () => {
     const provider = new GoogleAuthProvider()
     try {
       const result = await signInWithPopup(auth, provider)
-      if (sajuInput.name && sajuInput.birthDate) {
-        await setDoc(doc(db, "users", result.user.uid), { sajuInput, aiResult, updatedAt: new Date().toISOString() }, { merge: true })
-      }
+      
+      const dataToSync: any = { updatedAt: new Date().toISOString() };
+      if (sajuInput.name && sajuInput.birthDate) dataToSync.sajuInput = sajuInput;
+      if (aiResult) dataToSync.aiResult = aiResult;
+      if (recipeData) dataToSync.recipeData = recipeData;
+      if (chatMessages.length > 1) dataToSync.chatMessages = chatMessages;
+      if (companionSaju.name && companionSaju.birthDate) dataToSync.companionSaju = companionSaju;
+      if (familyResult) dataToSync.familyResult = familyResult;
+
+      await setDoc(doc(db, "users", result.user.uid), dataToSync, { merge: true })
     } catch (error) {}
   }
 
   const handleFirebaseLogout = async () => {
-    try { await signOut(auth); if (activeTab === "admin") setActiveTab("home") } catch (error) {}
+    try { 
+      await signOut(auth); 
+      // 로그아웃 시 보안을 위해 데이터와 localStorage 초기화
+      localStorage.removeItem("tmp_saju");
+      localStorage.removeItem("tmp_aiResult");
+      localStorage.removeItem("tmp_recipe");
+      localStorage.removeItem("tmp_chat");
+      localStorage.removeItem("tmp_companion");
+      localStorage.removeItem("tmp_familyResult");
+      
+      setHasAnalyzed(false); setAiResult(null); setSavedScraps([]);
+      setCompanionSaju({ name: "", birthDate: "", isTimeUnknown: false, birthHour: "00", birthMinute: "00", gender: "male", locationType: "city", birthCity: "인천", jasiLaw: "tongjasi" });
+      setFamilyResult(null);
+      setSajuInput({ name: "", birthDate: "", isTimeUnknown: false, birthHour: "00", birthMinute: "00", gender: "male", locationType: "city", birthCity: "인천", jasiLaw: "tongjasi" });
+      setRecipeData(null);
+      setChatMessages([
+        { role: "ai", content: "안녕하세요! 오행식탁 AI 상담소입니다.\n\n오늘 몸 상태나 기분이 어떠신가요? 사주 원국과 대조하여 맞춤형 식재료를 처방해 드릴게요! 😊" }
+      ]);
+
+      if (activeTab === "admin") setActiveTab("home") 
+    } catch (error) {}
   }
 
   const handleFetchTodayMenu = async (e: React.FormEvent) => {
@@ -175,12 +225,19 @@ export default function OhangSiktakMain() {
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
+      
       setAiResult(data.result);
       setHasAnalyzed(true);
       setRecipeData(null); 
 
+      // 🔥 비회원 유지: 로컬스토리지 저장
+      localStorage.setItem("tmp_saju", JSON.stringify(sajuInput));
+      localStorage.setItem("tmp_aiResult", JSON.stringify(data.result));
+      localStorage.removeItem("tmp_recipe"); 
+
+      // 🔥 회원 유지: Firebase 업데이트
       if (auth.currentUser) {
-        await setDoc(doc(db, "users", auth.currentUser.uid), { sajuInput, aiResult: data.result, updatedAt: new Date().toISOString() }, { merge: true })
+        await setDoc(doc(db, "users", auth.currentUser.uid), { sajuInput, aiResult: data.result, recipeData: null, updatedAt: new Date().toISOString() }, { merge: true })
       }
     } catch (error) { alert("AI 서버 통신 에러"); } finally { setIsLoading(false); }
   }
@@ -197,7 +254,6 @@ export default function OhangSiktakMain() {
     });
   }
 
-  // 🔥 레시피 불러오기 버튼 함수 (가족 메뉴까지 한 번에 로드)
   const handleFetchRecipes = async () => {
     if (!aiResult) return alert("사주 분석 결과가 없습니다. 메인 탭에서 먼저 진행해주세요.");
     
@@ -216,7 +272,15 @@ export default function OhangSiktakMain() {
         familyData = fData.result;
       }
 
-      setRecipeData({ lunch: lunchData.result, dinner: dinnerData.result, family: familyData });
+      const newRecipeData = { lunch: lunchData.result, dinner: dinnerData.result, family: familyData };
+      setRecipeData(newRecipeData);
+
+      // 🔥 비회원 및 회원 레시피 저장 로직 추가
+      localStorage.setItem("tmp_recipe", JSON.stringify(newRecipeData));
+      if (auth.currentUser) {
+        await setDoc(doc(db, "users", auth.currentUser.uid), { recipeData: newRecipeData, updatedAt: new Date().toISOString() }, { merge: true })
+      }
+
     } catch (e) {
       alert("레시피를 생성하는 도중 오류가 발생했습니다.");
     } finally {
@@ -227,7 +291,9 @@ export default function OhangSiktakMain() {
   const handleSendMessage = async () => {
     if (!chatInput.trim() || isChatLoading) return;
     const newMsg = { role: "user", content: chatInput };
-    setChatMessages(prev => [...prev, newMsg]);
+    const newChatHistory = [...chatMessages, newMsg];
+    
+    setChatMessages(newChatHistory);
     setChatInput("");
     setIsChatLoading(true);
 
@@ -242,11 +308,40 @@ export default function OhangSiktakMain() {
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-      setChatMessages(prev => [...prev, { role: "ai", content: data.result }]);
+      
+      const finalChatHistory = [...newChatHistory, { role: "ai", content: data.result }];
+      setChatMessages(finalChatHistory);
+
+      // 🔥 비회원 및 회원 채팅 로그 저장 로직 추가
+      localStorage.setItem("tmp_chat", JSON.stringify(finalChatHistory));
+      if (auth.currentUser) {
+        await setDoc(doc(db, "users", auth.currentUser.uid), { chatMessages: finalChatHistory, updatedAt: new Date().toISOString() }, { merge: true })
+      }
+
     } catch (e) {
-      setChatMessages(prev => [...prev, { role: "ai", content: "앗, 통신에 문제가 생겼어요. 다시 시도해주세요." }]);
+      const errorChatHistory = [...newChatHistory, { role: "ai", content: "앗, 통신에 문제가 생겼어요. 다시 시도해주세요." }];
+      setChatMessages(errorChatHistory);
     } finally { setIsChatLoading(false); }
   }
+
+  // 🔥 챗봇 대화 초기화 함수
+  const handleClearChat = async () => {
+    if (!window.confirm("대화 내역을 모두 지우고 처음부터 다시 시작하시겠습니까?")) return;
+    
+    const initChat = [
+      { role: "ai", content: "안녕하세요! 오행식탁 AI 상담소입니다.\n\n오늘 몸 상태나 기분이 어떠신가요? 사주 원국과 대조하여 맞춤형 식재료를 처방해 드릴게요! 😊" }
+    ];
+    
+    setChatMessages(initChat);
+    localStorage.setItem("tmp_chat", JSON.stringify(initChat));
+    
+    if (auth.currentUser) {
+      await setDoc(doc(db, "users", auth.currentUser.uid), { 
+        chatMessages: initChat, 
+        updatedAt: new Date().toISOString() 
+      }, { merge: true });
+    }
+  };
 
   const isItemSaved = (itemType: string, dataObj: any) => {
     return savedScraps.find(scrap => {
@@ -310,12 +405,18 @@ export default function OhangSiktakMain() {
       if (data.error) throw new Error(data.error);
       
       setFamilyResult(data.result);
-      setRecipeData(null); // 가족 궁합을 새로 분석하면 기존 캐싱된 레시피 초기화
+      setRecipeData(null); 
+
+      // 🔥 비회원/회원 데이터 저장 로직 추가
+      localStorage.setItem("tmp_companion", JSON.stringify(companionSaju));
+      localStorage.setItem("tmp_familyResult", JSON.stringify(data.result));
+      localStorage.removeItem("tmp_recipe");
 
       if (auth.currentUser) {
         await setDoc(doc(db, "users", auth.currentUser.uid), {
           companionSaju: companionSaju,
           familyResult: data.result,
+          recipeData: null,
           updatedAt: new Date().toISOString()
         }, { merge: true })
       }
@@ -839,9 +940,15 @@ export default function OhangSiktakMain() {
 
           {activeTab === "chatbot" && (
             <div className="flex flex-col h-[500px] border border-slate-200 rounded-xl overflow-hidden bg-slate-50">
-              <div className="bg-sky-600 text-white p-3 flex items-center gap-2 shadow-sm z-10">
-                <MessageSquare className="size-5" />
-                <span className="font-bold text-sm">오행식탁 통합 AI 어시스턴트</span>
+              {/* 🔥 대화 초기화 버튼이 추가된 헤더 */}
+              <div className="bg-sky-600 text-white p-3 flex items-center justify-between shadow-sm z-10">
+                <div className="flex items-center gap-2">
+                  <MessageSquare className="size-5" />
+                  <span className="font-bold text-sm">오행식탁 통합 AI 어시스턴트</span>
+                </div>
+                <Button variant="ghost" size="sm" className="h-7 text-white hover:bg-sky-500 hover:text-white text-xs px-2 gap-1" onClick={handleClearChat}>
+                  <Trash2 className="size-3.5" /> 대화 초기화
+                </Button>
               </div>
               
               <div className="flex-1 p-4 overflow-y-auto space-y-4 flex flex-col">
