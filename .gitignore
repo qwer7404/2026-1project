@@ -30,4 +30,4 @@ yarn-error.log*
 next-env.d.ts
 
 # route.ts
-route.ts
+#route.ts
